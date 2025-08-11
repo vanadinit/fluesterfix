@@ -21,6 +21,8 @@ from nacl.utils import random
 
 try:
     import qrcode
+    from qrcode.image.svg import SvgPathImage
+
     enable_qrcode = True
 except ImportError:
     enable_qrcode = False
@@ -330,7 +332,7 @@ def get_rid_fields(args):
 def get_qrcode_as_svg_if_available(text):
     if not enable_qrcode:
         return ''
-    qr = qrcode.QRCode(image_factory=qrcode.image.svg.SvgPathImage, box_size=15, border=4)
+    qr = qrcode.QRCode(image_factory=SvgPathImage, box_size=15, border=4)
     qr.add_data(text)
     return qr.make_image(fill_color="black", back_color="white").to_string().decode()
 
