@@ -21,7 +21,6 @@ from nacl.utils import random
 
 try:
     import qrcode
-    from qrcode.image.svg import SvgPathImage
     enable_qrcode = True
 except ImportError:
     enable_qrcode = False
@@ -175,14 +174,14 @@ def html(body):
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width,initial-scale=1.0">
         <title>{_('title')}</title>
-        <link rel="stylesheet" href="{ css_url }" type="text/css">
-        <script src="{ url_for('static', filename='clipboard.js') }"></script>
+        <link rel="stylesheet" href="{css_url}" type="text/css">
+        <script src="{url_for('static', filename='clipboard.js')}"></script>
     </head>
     <body>
         <a href="/" class="headerlink">
             <picture>
-                <source srcset="{ logo_dark_url }" media="(prefers-color-scheme: dark)">
-                <img src="{ logo_url }" id="logo" alt="{ logo_alt }">
+                <source srcset="{logo_dark_url}" media="(prefers-color-scheme: dark)">
+                <img src="{logo_url}" id="logo" alt="{logo_alt}">
             </picture>
         </a>
         {body}
@@ -198,9 +197,9 @@ def max_size_msg():
     max_size = int(max_size_env)
     if max_size is not None:
         for div, suff in (
-            (1_000_000_000, 'GB'),
-            (1_000_000, 'MB'),
-            (1_000, 'kB'),
+                (1_000_000_000, 'GB'),
+                (1_000_000, 'MB'),
+                (1_000, 'kB'),
         ):
             if max_size >= div:
                 max_size_human = f'{max_size // div} {suff}'
@@ -323,9 +322,17 @@ def validate_sid(sid):
 
 
 def get_rid_fields(args):
-    if rid:= args.get("rid"):
+    if rid := args.get("rid"):
         return f'?rid={rid}', f'<input name="rid" type="hidden" value="{args["rid"]}">'
     return '', ''
+
+
+def get_qrcode_as_svg_if_available(text):
+    if not enable_qrcode:
+        return ''
+    qr = qrcode.QRCode(image_factory=qrcode.image.svg.SvgPathImage, box_size=15, border=4)
+    qr.add_data(text)
+    return qr.make_image(fill_color="black", back_color="white").to_string().decode()
 
 
 @app.route('/')
@@ -379,13 +386,7 @@ def request_consume():
     scheme = request.headers.get('x-forwarded-proto', 'http')
     host = request.headers.get('x-forwarded-host', request.headers['host'])
     request_link = f'{scheme}://{host}/?rid={rid}'
-    if enable_qrcode:
-        qr = qrcode.QRCode(image_factory=SvgPathImage, box_size=15, border=4)
-        qr.add_data(request_link)
-        img = qr.make_image(fill_color="black", back_color="white").to_string().decode()
-        qrcode_svg = f'<p>{img}</p>'
-    else:
-        qrcode_svg = ''
+    qrcode_svg = get_qrcode_as_svg_if_available(request_link)
 
     return html(f'''
         <h1>{_('request')}</h1>
@@ -433,6 +434,7 @@ def new():
     scheme = request.headers.get('x-forwarded-proto', 'http')
     host = request.headers.get('x-forwarded-host', request.headers['host'])
     sid_url = f'{scheme}://{host}/get/{sid}/{key}'
+    qrcode_svg = get_qrcode_as_svg_if_available(sid_url)
 
     if rid:
         update_rid_info(rid, sid_url)
@@ -450,6 +452,7 @@ def new():
         return html(f'''
             <h1>{_('share this')}</h1>
             <p>{_('share this desc')}</p>
+            {qrcode_svg}
             <p><input id="copytarget" type="text" value="{sid_url}"></p>
             <p><span class="button" onclick="copy()">&#x1f4cb; {_('clip')}</span></p>
         '''), 201
@@ -465,14 +468,14 @@ def get(sid, key):
             h1 = _('download?')
             btn = _('download!')
             btn_js = (
-                'id="button" '
-                'onclick="'
+                    'id="button" '
+                    'onclick="'
                     'document.getElementById(\'button\').disabled = true;'
                     'document.getElementById(\'button\').value = \'' +
-                        _('download done') +
+                    _('download done') +
                     '\';'
                     'document.getElementById(\'form\').submit();'
-                '"'
+                    '"'
             )
             icon = '&#x1f4be;'
         else:
