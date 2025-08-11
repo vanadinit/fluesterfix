@@ -2,14 +2,16 @@
 
 
 from base64 import b64decode, b64encode
+from pathlib import Path
 from random import choice
-from os import environ, mkdir, rename
+from os import environ, mkdir, rename, makedirs, listdir, stat
 from os.path import isdir, isfile, join
 from re import compile as re_compile
 from shutil import rmtree
 from string import ascii_letters, digits
 from subprocess import run
 import unicodedata
+from time import time
 from urllib.parse import quote
 
 from flask import Flask, jsonify, make_response, redirect, request, url_for
@@ -21,6 +23,7 @@ from nacl.utils import random
 app = Flask(__name__)
 
 DATA = environ.get('FLUESTERFIX_DATA', '/tmp')
+REQUEST_INFO = Path(DATA) / 'request_infos'
 SID_LEN = 4
 SID_VALIDATOR = re_compile(f'^[A-Za-z0-9]{{{SID_LEN}}}$')
 
@@ -44,8 +47,17 @@ TRANS = {
         'download done': '&#x2705; File retrieved',
         'error': 'Error',
         'only once': 'You can only do this once.',
+        'request': 'Request a secret',
+        'request desc': 'Give the Request-Link (validity 7 days) below to someone you want '
+                        'to retrieve a secret from. You can reload this page '
+                        'or click on the ID to see if the secret is already '
+                        'stored. As long as you see this site the secret '
+                        'is not there yet',
         'reveal!': 'Reveal the secret',
         'reveal?': 'Reveal this secret?',
+        'rid missing': 'Request ID (rid) missing.',
+        'rid secret stored': 'Secret stored',
+        'rid secret stored desc': 'The requested secret can now be revealed on the other side.',
         'secret': 'Secret',
         'share new secret': 'Share a new secret',
         'share new file': 'Share a new file',
@@ -58,9 +70,9 @@ TRANS = {
                         'can send to someone else. That link can only '
                         'be used once.',
         'welcome maybe file': 'Alternatively, you can '
-                              '<a href="/file">upload a file</a>.',
+                              '<a href="/file{rid}">upload a file</a>.',
         'welcome maybe text': 'Alternatively, you can '
-                              '<a href="/">use plain text</a>.',
+                              '<a href="/{rid}">use plain text</a>.',
         'welcome file': 'Select the file to upload below. Once you hit '
                         'the button, you will get a link that you can '
                         'send to someone else. That link can only be '
@@ -85,8 +97,17 @@ TRANS = {
         'error': 'Fehler',
         'only once': 'Sie können diesen Vorgang nur <em>einmalig</em> '
                      'durchführen.',
+        'request': 'Vertrauliche Daten anfordern',
+        'request desc': 'Geben Sie den untenstehenden Request-Link (7 Tage gültig) an die Person weiter, '
+                        'von der sie vertrauliche Daten erhalten möchten. Sie können dann '
+                        'diese Seite neu laden oder auf die ID klicken um zu sehen, ob bereits '
+                        'vertrauliche Daten vorhanden sind. So lange Sie diese Seite'
+                        ' sehen ist das noch nicht der Fall.',
         'reveal!': 'Vertrauliche Daten anzeigen',
         'reveal?': 'Vertrauliche Daten anzeigen?',
+        'rid missing': 'Die Request ID (rid) fehlt.',
+        'rid secret stored': 'Vertrauliche Daten gespeichert',
+        'rid secret stored desc': 'Die vertraulichen Daten können nun auf der anderen Seite abgerufen werden.',
         'secret': 'Vertrauliche Daten',
         'share new secret': 'Neue vertrauliche Daten',
         'share new file': 'Neue vertrauliche Datei hochladen',
@@ -100,9 +121,9 @@ TRANS = {
                         'weitergeben können. Dieser Link kann nur ein '
                         'einziges Mal abgerufen werden.',
         'welcome maybe file': 'Alternativ können Sie '
-                              '<a href="/file">eine Datei hochladen</a>.',
+                              '<a href="/file{rid}">eine Datei hochladen</a>.',
         'welcome maybe text': 'Alternativ können Sie '
-                              '<a href="/">einfachen Text verwenden</a>.',
+                              '<a href="/{rid}">einfachen Text verwenden</a>.',
         'welcome file': 'Wählen Sie die hochzuladende Datei aus. Sobald '
                         'Sie den Knopf betätigen, erhalten Sie einen '
                         'Link, den Sie weitergeben können. Dieser Link '
@@ -230,6 +251,30 @@ def secret_exists(sid):
     return isdir(join(DATA, sid)), isfile(join(DATA, sid, 'filename'))
 
 
+def cleanup_rid_infos():
+    now = time()
+    for f in listdir(REQUEST_INFO):
+        if stat(REQUEST_INFO / f).st_mtime < now - 7 * 24 * 60 * 60:
+            rmtree(REQUEST_INFO / f)
+
+
+def create_rid():
+    makedirs(REQUEST_INFO, exist_ok=True)
+    cleanup_rid_infos()
+    while True:
+        try:
+            rid = generate_sid()
+            mkdir(REQUEST_INFO / rid)
+            return rid
+        except FileExistsError:
+            continue
+
+
+def update_rid_info(rid, sid_url):
+    with open(REQUEST_INFO / rid / 'info', 'w') as fp:
+        fp.write(sid_url)
+
+
 def store(secret_bytes, filename):
     while True:
         try:
@@ -271,14 +316,21 @@ def validate_sid(sid):
     assert SID_VALIDATOR.search(sid) is not None
 
 
+def get_rid_fields(args):
+    if rid:= args.get("rid"):
+        return f'?rid={rid}', f'<input name="rid" type="hidden" value="{args["rid"]}">'
+    return '', ''
+
+
 @app.route('/')
 def form_plain():
+    rid_param, rid_field = get_rid_fields(request.args)
     return html(f'''
         <h1>{_('share new secret')}</h1>
         <p>{_('welcome desc')}</p>
-        <p>{_('welcome maybe file')}</p>
+        <p>{_('welcome maybe file').format(rid=rid_param)}</p>
         <form action="/new" method="post">
-            <textarea name="data"></textarea>
+            <textarea name="data"></textarea>{rid_field}
             <input type="submit" value="&#x1f517; {_('create link')}">
         </form>
     ''')
@@ -286,23 +338,57 @@ def form_plain():
 
 @app.route('/file')
 def form_file():
+    rid_param, rid_field = get_rid_fields(request.args)
     max_size = f'<p>{max_size_msg()}</p>'
     return html(f'''
         <h1>{_('share new file')}</h1>
         <p>{_('welcome file')}</p>
-        <p>{_('welcome maybe text')}</p>
+        <p>{_('welcome maybe text').format(rid=rid_param)}</p>
         {max_size}
         <form action="/new" method="post" enctype="multipart/form-data">
-            <input type="file" name="file">
+            <input type="file" name="file">{rid_field}
             <input type="submit" value="&#x1f517; {_('create link')}">
         </form>
     ''')
 
 
+@app.route('/request')
+def request_secret():
+    rid = create_rid()
+    return redirect(f'/request_consume?rid={rid}')
+
+
+@app.route('/request_consume')
+def request_consume():
+    rid = request.args.get('rid')
+    if not rid:
+        return html(f'''
+            <h1>{_('error')}</h1>
+            {_('rid missing')}
+        '''), 400
+    if isfile(REQUEST_INFO / rid / 'info'):
+        with open(REQUEST_INFO / rid / 'info') as fp:
+            sid_url = fp.read()
+        return redirect(sid_url)
+    scheme = request.headers.get('x-forwarded-proto', 'http')
+    host = request.headers.get('x-forwarded-host', request.headers['host'])
+    request_link = f'{scheme}://{host}/?rid={rid}'
+
+    return html(f'''
+        <h1>{_('request')}</h1>
+        <p>{_('request desc')}</p>
+        <p>Request-ID: <a href='/request_consume?rid={rid}'>{rid}</a></p>
+        <p>Request-Link: <input id="copytarget" type="text" value="{request_link}"></p>
+        <p><span class="button" onclick="copy()">&#x1f4cb; {_('clip')}</span></p>
+    ''')
+
+
 @app.route('/new', methods=['POST'])
 def new():
+    rid = None
     try:
         if request.is_json:
+            rid = request.json.get('rid')
             if 'data_base64' in request.json and 'filename' in request.json:
                 secret_bytes = b64decode(request.json['data_base64'])
                 filename = request.json['filename']
@@ -327,10 +413,19 @@ def new():
         else:
             return redirect(url_for('form_plain'))
 
+    rid = rid or request.form.get('rid')
+
     sid, key = store(secret_bytes, filename)
     scheme = request.headers.get('x-forwarded-proto', 'http')
     host = request.headers.get('x-forwarded-host', request.headers['host'])
     sid_url = f'{scheme}://{host}/get/{sid}/{key}'
+
+    if rid:
+        update_rid_info(rid, sid_url)
+        return html(f'''
+            <h1>{_('rid secret stored')}</h1>
+            <p>{_('rid secret stored desc')}</p>
+        '''), 201
 
     if request.is_json:
         return jsonify({
