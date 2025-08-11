@@ -19,6 +19,12 @@ from markupsafe import escape
 from nacl.secret import SecretBox
 from nacl.utils import random
 
+try:
+    import qrcode
+    from qrcode.image.svg import SvgPathImage
+    enable_qrcode = True
+except ImportError:
+    enable_qrcode = False
 
 app = Flask(__name__)
 
@@ -373,11 +379,19 @@ def request_consume():
     scheme = request.headers.get('x-forwarded-proto', 'http')
     host = request.headers.get('x-forwarded-host', request.headers['host'])
     request_link = f'{scheme}://{host}/?rid={rid}'
+    if enable_qrcode:
+        qr = qrcode.QRCode(image_factory=SvgPathImage, box_size=15, border=4)
+        qr.add_data(request_link)
+        img = qr.make_image(fill_color="black", back_color="white").to_string().decode()
+        qrcode_svg = f'<p>{img}</p>'
+    else:
+        qrcode_svg = ''
 
     return html(f'''
         <h1>{_('request')}</h1>
         <p>{_('request desc')}</p>
         <p>Request-ID: <a href='/request_consume?rid={rid}'>{rid}</a></p>
+        {qrcode_svg}
         <p>Request-Link: <input id="copytarget" type="text" value="{request_link}"></p>
         <p><span class="button" onclick="copy()">&#x1f4cb; {_('clip')}</span></p>
     ''')
