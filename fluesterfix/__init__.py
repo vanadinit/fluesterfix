@@ -384,6 +384,7 @@ def request_consume():
     if isfile(REQUEST_INFO / rid / 'info'):
         with open(REQUEST_INFO / rid / 'info') as fp:
             sid_url = fp.read()
+        rmtree(REQUEST_INFO / rid)
         return redirect(sid_url)
     scheme = request.headers.get('x-forwarded-proto', 'http')
     host = request.headers.get('x-forwarded-host', request.headers['host'])
