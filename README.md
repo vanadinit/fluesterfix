@@ -44,6 +44,8 @@ Use the following environment variables:
 -   `$FLUESTERFIX_MAX_FILE_SIZE`: Maximum allowed size (in bytes) for
     file uploads. The actual filtering must be done in your reverse
     proxy; this variable only displays that limit. Unset by default.
+-   `$FLUESTERFIX_ENABLE_QR`: Set to an arbitrary value to show QR code
+    of the share links. Needs `qrcode` Python library to be installed.
 
 The program does not automatically remove secrets which have never been
 retrieved. You might want to install a cron job on your system to remove

@@ -23,7 +23,7 @@ try:
     import qrcode
     from qrcode.image.svg import SvgPathImage
 
-    enable_qrcode = True
+    enable_qrcode = bool(environ.get('FLUESTERFIX_ENABLE_QR'))
 except ImportError:
     enable_qrcode = False
 
@@ -47,6 +47,7 @@ TRANS = {
                             'you should inform the creator of the '
                             'secret about a potential security '
                             'breach.</p>',
+        'autoreload': 'Auto reload every 5s',
         'clip': 'Copy to clipboard',
         'create link': 'Create link',
         'download?': 'Download this secret?',
@@ -57,9 +58,8 @@ TRANS = {
         'request': 'Request a secret',
         'request desc': 'Give the Request-Link (validity 7 days) below to someone you want '
                         'to retrieve a secret from. You can reload this page '
-                        'or click on the ID to see if the secret is already '
-                        'stored. As long as you see this site the secret '
-                        'is not there yet',
+                        'to see if the secret is already available. '
+                        'As long as you see this site the secret has not been entered yet',
         'reveal!': 'Reveal the secret',
         'reveal?': 'Reveal this secret?',
         'rid missing': 'Request ID (rid) missing.',
@@ -96,6 +96,7 @@ TRANS = {
                             'abgerufen haben, sollten Sie die '
                             'Versender*in über die potentielle '
                             'Kompromittierung informieren.</p>',
+        'autoreload': 'Automatisch alle 5s neu laden',
         'clip': 'In die Zwischenablage kopieren',
         'create link': 'Link erzeugen',
         'download?': 'Vertrauliche Daten herunterladen?',
@@ -107,9 +108,9 @@ TRANS = {
         'request': 'Vertrauliche Daten anfordern',
         'request desc': 'Geben Sie den untenstehenden Request-Link (7 Tage gültig) an die Person weiter, '
                         'von der sie vertrauliche Daten erhalten möchten. Sie können dann '
-                        'diese Seite neu laden oder auf die ID klicken um zu sehen, ob bereits '
-                        'vertrauliche Daten vorhanden sind. So lange Sie diese Seite'
-                        ' sehen ist das noch nicht der Fall.',
+                        'diese Seite neu laden um zu sehen, ob bereits '
+                        'vertrauliche Daten vorhanden sind. So lange Sie diese Seite '
+                        'sehen ist, das noch nicht der Fall.',
         'reveal!': 'Vertrauliche Daten anzeigen',
         'reveal?': 'Vertrauliche Daten anzeigen?',
         'rid missing': 'Die Request ID (rid) fehlt.',
@@ -178,6 +179,7 @@ def html(body):
         <title>{_('title')}</title>
         <link rel="stylesheet" href="{css_url}" type="text/css">
         <script src="{url_for('static', filename='clipboard.js')}"></script>
+        <script src="{url_for('static', filename='reload.js')}"></script>
     </head>
     <body>
         <a href="/" class="headerlink">
@@ -329,12 +331,13 @@ def get_rid_fields(args):
     return '', ''
 
 
-def get_qrcode_as_svg_if_available(text):
+def get_qrcode_html_if_available(text):
     if not enable_qrcode:
         return ''
     qr = qrcode.QRCode(image_factory=SvgPathImage, box_size=15, border=4)
     qr.add_data(text)
-    return qr.make_image(fill_color="black", back_color="white").to_string().decode()
+    svg = qr.make_image(fill_color="black", back_color="white").to_string().decode()
+    return f'<details><summary>QR-Code</summary>{svg}</details>'
 
 
 @app.route('/')
@@ -389,15 +392,16 @@ def request_consume():
     scheme = request.headers.get('x-forwarded-proto', 'http')
     host = request.headers.get('x-forwarded-host', request.headers['host'])
     request_link = f'{scheme}://{host}/?rid={rid}'
-    qrcode_svg = get_qrcode_as_svg_if_available(request_link)
+    qrcode_html = get_qrcode_html_if_available(request_link)
 
     return html(f'''
         <h1>{_('request')}</h1>
         <p>{_('request desc')}</p>
-        <p>Request-ID: <a href='/request_consume?rid={rid}'>{rid}</a></p>
-        {qrcode_svg}
+        {qrcode_html}
+        <p>Request-ID: {rid}</p>
         <p>Request-Link: <input id="copytarget" type="text" value="{request_link}"></p>
         <p><span class="button" onclick="copy()">&#x1f4cb; {_('clip')}</span></p>
+        <p><label><input type="checkbox" id="autoReloadToggle"> {_('autoreload')}</label></p>
     ''')
 
 
@@ -437,7 +441,7 @@ def new():
     scheme = request.headers.get('x-forwarded-proto', 'http')
     host = request.headers.get('x-forwarded-host', request.headers['host'])
     sid_url = f'{scheme}://{host}/get/{sid}/{key}'
-    qrcode_svg = get_qrcode_as_svg_if_available(sid_url)
+    qrcode_html = get_qrcode_html_if_available(sid_url)
 
     if rid:
         update_rid_info(rid, sid_url)
@@ -455,7 +459,7 @@ def new():
         return html(f'''
             <h1>{_('share this')}</h1>
             <p>{_('share this desc')}</p>
-            {qrcode_svg}
+            {qrcode_html}
             <p><input id="copytarget" type="text" value="{sid_url}"></p>
             <p><span class="button" onclick="copy()">&#x1f4cb; {_('clip')}</span></p>
         '''), 201
